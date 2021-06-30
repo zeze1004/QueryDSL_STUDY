@@ -4,15 +4,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static study.querydsl.entity.QMember.member;
 import static study.querydsl.entity.QTeam.team;
 
-
 import java.util.List;
 
 import javax.persistence.EntityManager;
+import javax.persistence.EntityManagerFactory;
 import javax.persistence.PersistenceContext;
+import javax.persistence.PersistenceUnit;
 import javax.transaction.Transactional;
 
 import com.querydsl.core.QueryResults;
 import com.querydsl.core.Tuple;
+import com.querydsl.jpa.JPAExpressions;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -368,4 +370,135 @@ public class QuerydslBasicTest {
             System.out.println("tuple = " + tuple);
         }
     }
+
+    // 페치 조인
+    // (실무에서 많이 쓰이는데 잘 모르게따...^ㅠ^)
+    // 페치 조인은 SQL에 없는 기능
+    // SQL 조인을 활용해서 연관된 엔티티를 SQL 한 번에 조회
+
+    @PersistenceUnit
+    EntityManagerFactory emf;
+
+    // 페치 조인 적용 안 했을 때
+    @Test
+    public void fetchJoinNo() throws Exception {
+        // 페치 조인을 검사할 때는 영속성컨텍스트를 비워줘야 깔끔하게 결과 볼 수 있음
+        em.flush();
+        em.clear();
+        Member findMember = queryFactory
+                .selectFrom(member)
+                .where(member.username.eq("member1"))
+                .fetchOne();
+        boolean loaded =
+                // 로딩이 된 얘인지 판단(isLoaded)
+                emf.getPersistenceUnitUtil().isLoaded(findMember.getTeam());
+        // 페치조인이 적용 안했으니 로딩이 안 되는게 맞음
+        assertThat(loaded).as("페치 조인 미적용").isFalse();
+    }
+
+    // 페치 조인 적용
+    @Test
+    public void fetchJoinUse() throws Exception {
+        // 페치 조인을 검사할 때는 영속성컨텍스트를 비워줘야 깔끔하게 결과 볼 수 있음
+        em.flush();
+        em.clear();
+        Member findMember = queryFactory
+                .selectFrom(member)
+                .join(member.team, team).fetchJoin()    // fetchJoin()만 추가해주면 됨
+                .where(member.username.eq("member1"))
+                .fetchOne();
+        boolean loaded =
+                // 로딩이 된 얘인지 판단(isLoaded)
+                emf.getPersistenceUnitUtil().isLoaded(findMember.getTeam());
+        // 페치조인이 적용 안했으니 로딩이 안 되는게 맞음
+        assertThat(loaded).as("페치 조인 적용").isTrue();
+    }
+
+    // 서브쿼리: 쿼리 안에 쿼리 추가
+    @Test
+    public void subQuery() throws Exception {
+        // 쿼리문과 서브쿼리문의 변수가 중복되면 안되므로 새롭게 만들어줘야함
+        QMember memberSub = new QMember("memberSub");
+        List<Member> result = queryFactory
+                .selectFrom(member)
+                .where(member.age.eq(   // 쿼리문 안에 쿼리 추가
+                        JPAExpressions
+                                .select(memberSub.age.max())
+                                .from(memberSub)
+                ))
+                .fetch();
+        assertThat(result).extracting("age")
+                .containsExactly(40); // 결과가 40이면 테스트 통과
+    }
+
+    // 나이가 평균 이상인 회원 찾기
+    @Test
+    public void subQueryUpAvg() throws Exception {
+        // 쿼리문과 서브쿼리문의 변수가 중복되면 안되므로 새롭게 만들어줘야함
+        QMember memberSub = new QMember("memberSub");
+        List<Member> result = queryFactory
+                .selectFrom(member)
+                // goe: 크거나 같음
+                .where(member.age.goe(   // 쿼리문 안에 쿼리 추가
+                        JPAExpressions
+                                .select(memberSub.age.avg())
+                                .from(memberSub)
+                ))
+                .fetch();
+        assertThat(result).extracting("age")
+                .containsExactly(30, 40); // 결과가 30, 40이면 테스트 통과
+    }
+
+    // 서브 쿼리 IN 쓰는 법법
+   @Test
+    public void subQueryIn() throws Exception {
+        // 쿼리문과 서브쿼리문의 변수가 중복되면 안되므로 새롭게 만들어줘야함
+        QMember memberSub = new QMember("memberSub");
+        List<Member> result = queryFactory
+                .selectFrom(member)
+                // 비효율적인 코드나 in절 쓰는 법을 보여주기 위한 예시
+                .where(member.age.in(   // 쿼리문 안에 쿼리 추가
+                        JPAExpressions
+                                .select(memberSub.age)
+                                .from(memberSub)
+                                // gt: 초과
+                                .where(memberSub.age.gt(10))
+                ))
+                .fetch();
+        assertThat(result).extracting("age")
+                .containsExactly(20, 30, 40); // 결과가 20, 30, 40이면 테스트 통과
+    }
+
+    // select 서브쿼리 사용법
+    @Test
+    public void selectsubQuery() throws Exception {
+        // 쿼리문과 서브쿼리문의 변수가 중복되면 안되므로 새롭게 만들어줘야함
+        QMember memberSub = new QMember("memberSub");
+        List<Tuple> result = queryFactory
+                .select(member.username,
+                        JPAExpressions
+                                .select(memberSub.age.avg())
+                                .from(memberSub))
+                .from(member)
+                .fetch();
+
+        for (Tuple tuple : result) {
+            System.out.println("tuple = " + tuple);
+        }
+    }
+
+    // case 문
+    // select, 조건절(where), order by에서 사용 가능
+    public void basicCase() {
+        queryFactory
+                .select(member.age
+                        .when(10).then("열살")
+                        .when(20).then("스무살")
+                        .otherwise("기타"))
+                .fetch();
+
+    }
+
+
+
 }
