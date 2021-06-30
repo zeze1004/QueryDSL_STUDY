@@ -42,9 +42,8 @@ test {
 	useJUnitPlatform()
 }
 
-// querydsl 추가 시작
+
 // querydsl 적용
-apply plugin: "com.ewerk.gradle.plugins.querydsl"
 def querydslDir = "$buildDir/generated/querydsl"
 querydsl {
 	jpa = true
